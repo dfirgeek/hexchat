@@ -459,7 +459,6 @@ const struct prefs vars[] =
 	{"gui_ulist_hide", P_OFFINT (hex_gui_ulist_hide), TYPE_BOOL},
 	{"gui_ulist_icons", P_OFFINT (hex_gui_ulist_icons), TYPE_BOOL},
 	{"gui_ulist_pos", P_OFFINT (hex_gui_ulist_pos), TYPE_INT},
-	{"gui_ulist_resizable", P_OFFINT (hex_gui_ulist_resizable), TYPE_BOOL},
 	{"gui_ulist_show_hosts", P_OFFINT(hex_gui_ulist_show_hosts), TYPE_BOOL},
 	{"gui_ulist_sort", P_OFFINT (hex_gui_ulist_sort), TYPE_INT},
 	{"gui_ulist_style", P_OFFINT (hex_gui_ulist_style), TYPE_BOOL},
@@ -476,7 +475,7 @@ const struct prefs vars[] =
 	{"gui_win_ucount", P_OFFINT (hex_gui_win_ucount), TYPE_BOOL},
 	{"gui_win_width", P_OFFINT (hex_gui_win_width), TYPE_INT},
 
-	{"identd", P_OFFINT (hex_identd), TYPE_BOOL},
+	{"identd_server", P_OFFINT (hex_identd_server), TYPE_BOOL},
 	{"identd_port", P_OFFINT (hex_identd_port), TYPE_INT},
 
 	{"input_balloon_chans", P_OFFINT (hex_input_balloon_chans), TYPE_BOOL},
@@ -532,7 +531,7 @@ const struct prefs vars[] =
 	{"net_auto_reconnectonfail", P_OFFINT (hex_net_auto_reconnectonfail), TYPE_BOOL},
 #endif
 	{"net_bind_host", P_OFFSET (hex_net_bind_host), TYPE_STR},
-	{"net_ping_timeout", P_OFFINT (hex_net_ping_timeout), TYPE_INT},
+	{"net_ping_timeout", P_OFFINT (hex_net_ping_timeout), TYPE_INT, hexchat_reinit_timers},
 	{"net_proxy_auth", P_OFFINT (hex_net_proxy_auth), TYPE_BOOL},
 	{"net_proxy_host", P_OFFSET (hex_net_proxy_host), TYPE_STR},
 	{"net_proxy_pass", P_OFFSET (hex_net_proxy_pass), TYPE_STR},
@@ -585,16 +584,17 @@ const struct prefs vars[] =
 	{0, 0, 0},
 };
 
-static const char *
-convert_with_fallback (const char *str, const char *fallback)
+
+static char *
+convert_with_fallback (char *str, const char *fallback)
 {
-	const char *utf;
+	char *utf;
 
 #ifndef WIN32
 	/* On non-Windows, g_get_user_name and g_get_real_name return a string in system locale, so convert it to utf-8. */
 	utf = g_locale_to_utf8 (str, -1, NULL, NULL, 0);
 
-	g_free ((char*)str);
+	g_free (str);
 
 	/* The returned string is NULL if conversion from locale to utf-8 failed for any reason. Return the fallback. */
 	if (!utf)
@@ -711,14 +711,15 @@ get_default_spell_languages (void)
 void
 load_default_config(void)
 {
-	const char *username, *realname, *font, *langs;
+	char *username, *realname, *langs;
+	const char *font;
 	char *sp;
 #ifdef WIN32
 	wchar_t* roaming_path_wide;
 	gchar* roaming_path;
 #endif
 
-	username = g_get_user_name ();
+	username = g_strdup(g_get_user_name ());
 	if (!username)
 		username = g_strdup ("root");
 
@@ -769,9 +770,9 @@ load_default_config(void)
 	prefs.hex_gui_tray_blink = 1;
 	prefs.hex_gui_ulist_count = 1;
 	prefs.hex_gui_ulist_icons = 1;
-	prefs.hex_gui_ulist_resizable = 1;
 	prefs.hex_gui_ulist_style = 1;
 	prefs.hex_gui_win_save = 1;
+	prefs.hex_input_filter_beep = 1;
 	prefs.hex_input_flash_hilight = 1;
 	prefs.hex_input_flash_priv = 1;
 	prefs.hex_input_tray_hilight = 1;
@@ -829,10 +830,11 @@ load_default_config(void)
 	prefs.hex_gui_win_width = 640;
 	prefs.hex_irc_ban_type = 1;
 	prefs.hex_irc_join_delay = 5;
+	prefs.hex_net_ping_timeout = 60;
 	prefs.hex_net_reconnect_delay = 10;
 	prefs.hex_notify_timeout = 15;
 	prefs.hex_text_max_indent = 256;
-	prefs.hex_text_max_lines = 500;
+	prefs.hex_text_max_lines = 5000;
 	prefs.hex_url_grabber_limit = 100; 		/* 0 means unlimited */
 
 	/* STRINGS */
@@ -904,9 +906,9 @@ load_default_config(void)
 	if (sp)
 		sp[0] = 0;	/* spaces in username would break the login */
 
-	g_free ((char *)username);
-	g_free ((char *)realname);
-	g_free ((char *)langs);
+	g_free (username);
+	g_free (realname);
+	g_free (langs);
 }
 
 int
@@ -1043,6 +1045,11 @@ save_config (void)
 				g_free (new_config);
 				return 0;
 			}
+		}
+
+		if (vars[i].after_update != NULL)
+		{
+			vars[i].after_update();
 		}
 		i++;
 	}
@@ -1290,6 +1297,11 @@ cmd_set (struct session *sess, char *tbuf, char *word[], char *word_eol[])
 				else
 				{
 					set_showval (sess, &vars[i], tbuf);
+				}
+
+				if (vars[i].after_update != NULL)
+				{
+					vars[i].after_update();
 				}
 				break;
 			}

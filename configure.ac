@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([HexChat],[2.11.0])
+AC_INIT([HexChat],[2.12.4])
 
 AC_PREREQ([2.64])
 AC_COPYRIGHT([Copyright (C) 1998-2010 Peter Zelezny])
@@ -9,13 +9,18 @@ AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_SRCDIR([configure.ac])
 
 AC_CONFIG_MACRO_DIR([m4])
+AC_CONFIG_AUX_DIR([build-aux])
 
-AM_INIT_AUTOMAKE([1.11.1 dist-bzip2 subdir-objects no-define foreign])
+AM_INIT_AUTOMAKE([1.11.1 dist-xz no-dist-gzip subdir-objects no-define foreign])
 AM_SILENT_RULES([yes])
+
+AC_DEFUN([HEX_CHECK_MACRO], [m4_ifndef([$1], [m4_fatal([macro ]$1[ is not defined. Is ]$2[ installed?])])])
+
+HEX_CHECK_MACRO([AX_APPEND_COMPILE_FLAGS], [autoconf-archive])
+HEX_CHECK_MACRO([PKG_PROG_PKG_CONFIG], [pkg-config])
 
 AX_IS_RELEASE([minor-version])
 AX_CHECK_ENABLE_DEBUG([yes])
-AX_REQUIRE_DEFINED([PKG_PROG_PKG_CONFIG])
 
 AC_USE_SYSTEM_EXTENSIONS
 AM_MAINTAINER_MODE([enable])
@@ -114,6 +119,10 @@ AC_ARG_ENABLE(perl,
 	[AS_HELP_STRING([--disable-perl],[don\'t build the perl plugin])],
         perl=$enableval, perl=yes)
 
+AC_ARG_ENABLE(lua,
+	[AS_HELP_STRING([--disable-lua],[don\'t build the lua plugin])],
+        lua=$enableval, lua=yes)
+
 AC_ARG_ENABLE(perl_old,
 	[AS_HELP_STRING([--disable-perl_old],[no backwards compatibility for perl plugin])],
         perl_old=$enableval, perl_old=yes)
@@ -125,10 +134,6 @@ AC_ARG_ENABLE(plugin,
 AC_ARG_ENABLE(checksum,
 	[AS_HELP_STRING([--disable-checksum],[disable the Checksum plugin])],
         checksum=$enableval, checksum=yes)
-
-AC_ARG_ENABLE(doat,
-	[AS_HELP_STRING([--disable-doat],[disable the Do At plugin])],
-        doat=$enableval, doat=yes)
 
 AC_ARG_ENABLE(fishlim,
 	[AS_HELP_STRING([--disable-fishlim],[disable the FiSHLiM plugin])],
@@ -166,6 +171,9 @@ AC_ARG_WITH(theme-manager,
 	[AS_HELP_STRING([--with-theme-manager],[compile theme manager (needs monodevelop, default: off)])],
 		theme_manager=$withval, theme_manager=no)
 
+AC_ARG_ENABLE(stack-protector,
+	[AS_HELP_STRING([--disable-stack-protector],[disable building with stack-protector])],
+        stack_protector=$enableval, stack_protector=yes)
 
 
 dnl *********************************************************************
@@ -182,11 +190,11 @@ dnl *********************************************************************
 dnl ** GLIB *************************************************************
 dnl *********************************************************************
 
-AM_PATH_GLIB_2_0([2.32.0], [], [AC_MSG_ERROR([Glib not found!])], [gmodule gobject gio])
+AM_PATH_GLIB_2_0([2.34.0], [], [AC_MSG_ERROR([Glib not found!])], [gmodule gobject gio])
 COMMON_CFLAGS="$GLIB_CFLAGS -DG_DISABLE_SINGLE_INCLUDES"
 COMMON_LIBS="$GLIB_LIBS"
-AC_DEFINE([GLIB_VERSION_MIN_REQUIRED], [GLIB_VERSION_2_32], [Dont warn using older APIs])
-AC_DEFINE([GLIB_VERSION_MAX_ALLOWED], [GLIB_VERSION_2_32], [Prevents using newer APIs])
+AC_DEFINE([GLIB_VERSION_MIN_REQUIRED], [GLIB_VERSION_2_34], [Dont warn using older APIs])
+AC_DEFINE([GLIB_VERSION_MAX_ALLOWED], [GLIB_VERSION_2_34], [Prevents using newer APIs])
 
 dnl *********************************************************************
 dnl ** GTK **************************************************************
@@ -211,6 +219,40 @@ AS_IF([test "x$_gdk_tgt" = xquartz], [
 		GUI_LIBS="$GUI_LIBS $GTK_MAC_LIBS"
 		GUI_CFLAGS="$GUI_CFLAGS $GTK_MAC_CFLAGS"
 		AC_DEFINE(HAVE_GTK_MAC)
+	])
+])
+
+
+dnl *********************************************************************
+dnl ** Lua **************************************************************
+dnl *********************************************************************
+
+AS_IF([test "$lua" = yes], [
+	AC_MSG_CHECKING(for plugin interface used by lua)
+	AS_IF([test "$plugin" = yes], [
+		AC_MSG_RESULT([yes])
+
+		m4_define_default([_LUA_LIST], [luajit lua lua5.3 lua53 lua5.2 lua52 lua5.1 lua51])
+
+		AC_ARG_VAR([LUA], [The Lua pkgconfig name, e.g. luajit or lua5.2])
+		AS_IF([test "x$LUA" = 'x'], [
+			for lua_var in _LUA_LIST; do
+				$PKG_CONFIG --exists $lua_var || continue
+				LUA=$lua_var
+				break
+			done
+			AS_IF([test "x$LUA" = 'x'], [
+				AC_MSG_ERROR([Failed to find lua])
+			])
+		])
+
+		PKG_CHECK_MODULES([LUA], $LUA, [
+			AC_SUBST([LUA_CFLAGS])
+			AC_SUBST([LUA_LIBS])
+		])
+	], [
+		AC_MSG_RESULT([plugins are disabled, use the --enable-plugin option for lua])
+		lua=no
 	])
 ])
 
@@ -264,39 +306,31 @@ AS_IF([test "x$python" != xno], [
 		AS_CASE([$python],
 			dnl set python2 default here
 			[python2], [
-				PKG_CHECK_MODULES([PY], [python-2.7],
-								  [PY_VER="`$PKG_CONFIG --modversion python-2.7`"],
-								  [true])
+				PYTHON_VERSION=2
+				AX_PYTHON_DEVEL([>= '2.7'])
 			],
 			dnl set python3 default here
 			[python3], [
-				PKG_CHECK_MODULES([PY], [python-3.4],
-								  [PY_VER="`$PKG_CONFIG --modversion python-3.4`"],
-								  [true])
-				AS_IF([test "$PY_VER" = ""], [
-					PKG_CHECK_MODULES([PY], [python-3.3],
-									  [PY_VER="`$PKG_CONFIG --modversion python-3.3`"],
-									  [true])
-				])
-			], 
+				PYTHON_VERSION=3
+				AX_PYTHON_DEVEL([>= '3.3'])
+			],
 			dnl add broken versions here
 			[python2.5|python2.6|python3.1|python3.2], [
 				AC_MSG_WARN(Unsupported Python version ${python}!)
 			],
+			dnl user supplied version
 			[python*], [
-				python="python-${python#python}" # stay posix compliant
-				PKG_CHECK_MODULES([PY], [${python}],
-								  [PY_VER="`$PKG_CONFIG --modversion ${python}`"],
-								  [AC_MSG_WARN(Cannot find "${python}.pc"!)])
+				PYTHON_VERSION="${python#python}"
+				AX_PYTHON_DEVEL()
 			],[
 				AC_MSG_WARN(Unsupported Python ${python}!)
 			]
 		)
 		AC_MSG_CHECKING(Python version)
 
-		AS_IF([test "$PY_VER"], [
-			AC_MSG_RESULT($PY_VER)
-			python="python-${PY_VER}"
+		AS_IF([test "$ac_python_version" != ""], [
+			AC_MSG_RESULT($ac_python_version)
+			python="python-${ac_python_version}"
 		], [
 			AC_MSG_RESULT(Not found)
 			python=no
@@ -336,7 +370,7 @@ dnl *********************************************************************
 
 
 AS_IF([test "$openssl" != no], [
-	PKG_CHECK_MODULES(OPENSSL, [openssl], [
+	PKG_CHECK_MODULES(OPENSSL, [openssl >= 0.9.8], [
 		AC_DEFINE(USE_OPENSSL)
 		openssl=yes
 		COMMON_LIBS="$COMMON_LIBS $OPENSSL_LIBS"
@@ -370,6 +404,14 @@ AS_IF([test "$openssl" != no], [
 			CFLAGS=$SAVED_CFLAGS
 		])
 		LIBS=$SAVED_LIBS
+	])
+
+	AS_IF([test "$openssl" = yes], [
+		dnl Test for various functions that are not available in LibreSSL
+		SAVED_LIBS="$LIBS"
+		LIBS="$OPENSSL_LIBS"
+		AC_CHECK_FUNCS([SSL_CTX_get_ssl_method X509_get_signature_nid DH_set0_pqg DH_get0_key DH_set0_key])
+		LIBS="$SAVED_LIBS"
 	])
 ])
 
@@ -417,21 +459,6 @@ AS_IF([test "$checksum" != "no"], [
 		AC_MSG_RESULT([yes])
 	], [
 		AC_MSG_RESULT([plugins are disabled, use the --enable-plugin option])
-	])
-])
-
-dnl *********************************************************************
-dnl ** DO AT ************************************************************
-dnl *********************************************************************
-
-AS_IF([test "$doat" != "no"], [
-	AC_MSG_CHECKING(for plugin interface used by Do At)
-	doat=no
-	AS_IF([test "$plugin" = yes], [
-		doat=yes
-		AC_MSG_RESULT([yes])
-	], [
-		AC_MSG_RESULT([plugins are disabled, use the --enable-plugin option for Do At])
 	])
 ])
 
@@ -568,10 +595,10 @@ AM_CONDITIONAL(USE_LIBCANBERRA, test "x$libcanberra" = "xyes")
 AM_CONDITIONAL(DO_TEXT, test "x$textfe" = "xyes")
 AM_CONDITIONAL(DO_GTK, test "x$gtkfe" = "xyes")
 AM_CONDITIONAL(DO_PERL, test "x$perl" = "xyes")
+AM_CONDITIONAL(DO_LUA, test "x$lua" = "xyes")
 AM_CONDITIONAL(DO_PYTHON, test "x$python" != "xno")
 AM_CONDITIONAL(DO_PLUGIN, test "x$plugin" = "xyes")
 AM_CONDITIONAL(DO_CHECKSUM, test "x$checksum" = "xyes")
-AM_CONDITIONAL(DO_DOAT, test "x$doat" = "xyes")
 AM_CONDITIONAL(DO_FISHLIM, test "x$fishlim" = "xyes")
 AM_CONDITIONAL(DO_SYSINFO, test "x$sysinfo" = "xyes")
 AM_CONDITIONAL(DO_STATIC_ANALYSIS, test "x$analyze" = "xyes")
@@ -585,18 +612,38 @@ dnl *********************************************************************
 dnl ** CFLAGS ***********************************************************
 dnl *********************************************************************
 
-CC_CHECK_FLAGS_APPEND([CFLAGS], [CFLAGS], [ \
+AX_APPEND_COMPILE_FLAGS([\
 	-pipe \
 	-funsigned-char \
+	-fPIE \
+	-fPIC \
 	-Wall \
 	-Wextra \
+	-Wstrict-prototypes \
 	-Wno-unused-parameter \
 	-Wno-sign-compare \
 	-Wno-pointer-sign \
 	-Wno-missing-field-initializers \
 	-Wno-unused-result \
 	-Werror=format-security \
+	-Werror=init-self \
 	-Werror=declaration-after-statement \
+	-Werror=missing-include-dirs \
+	-Werror=date-time \
+	-Werror=implicit-function-declaration \
+	-Werror=pointer-arith \
+])
+
+AS_IF([test "$stack_protector" = "yes"], [
+	AX_APPEND_COMPILE_FLAGS([ \
+		-fstack-protector-strong \
+	])
+])
+
+AX_APPEND_LINK_FLAGS([ \
+	-pie \
+	-Wl,-z,relro \
+	-Wl,-z,now \
 ])
 
 dnl *********************************************************************
@@ -657,8 +704,8 @@ AC_SUBST(COMMON_LIBS)
 AC_SUBST(COMMON_CFLAGS)
 AC_SUBST(PERL_CFLAGS)
 AC_SUBST(PERL_LDFLAGS)
-AC_SUBST(PY_CFLAGS)
-AC_SUBST(PY_LIBS)
+AC_SUBST(PYTHON_CPPFLAGS)
+AC_SUBST(PYTHON_LIBS)
 AC_SUBST(DBUS_CFLAGS)
 AC_SUBST(DBUS_LIBS)
 AC_SUBST(OPENSSL_LIBS)
@@ -705,10 +752,10 @@ src/htm/Makefile
 src/htm/thememan
 osx/Info.plist
 plugins/Makefile
+plugins/lua/Makefile
 plugins/python/Makefile
 plugins/perl/Makefile
 plugins/checksum/Makefile
-plugins/doat/Makefile
 plugins/fishlim/Makefile
 plugins/sysinfo/Makefile
 po/Makefile.in
@@ -730,11 +777,11 @@ echo libcanberra support ... : $libcanberra
 echo Plugin interface ...... : $plugin
 echo libproxy support ...... : $libproxy
 echo
+echo Lua ................... : $lua \($LUA\)
 echo Perl .................. : $perl
 echo Python ................ : $python
 echo
 echo Checksum .............. : $checksum
-echo Do At ................. : $doat
 echo FiSHLiM ............... : $fishlim
 echo SysInfo ............... : $sysinfo
 echo
